@@ -1,0 +1,12 @@
+[
+    {
+        "property_id": 101,
+        "location": "Powai",
+        "price": 9500000
+    },
+    {
+        "property_id": 102,
+        "location": "Andheri",
+        "price": 25000000
+    }
+]

@@ -1,0 +1,9 @@
+requests
+python-dotenv
+pypdf
+fastapi
+uvicorn
+streamlit
+pandas
+plotly
+slowapi

@@ -1,16 +1,18 @@
-from ollama import Client
 
-client = Client(host="http://10.22.39.192:11434")
+import os
+import requests
 
-response = client.chat(
-    model="glm-ocr:latest",
-    messages=[
-        {
-            "role": "user",
-            "content": "Extract all text from this image.",
-            "images": ["sample.jpg"],  # Replace with your actual image path
-        }
-    ],
+
+OLLAMA_BASE_URL = os.getenv(
+    "OLLAMA_BASE_URL",
+    "http://10.22.39.192:11434"
 )
 
-print(response["message"]["content"])
+
+def test_ollama_server_is_available():
+    response = requests.get(
+        f"{OLLAMA_BASE_URL}/api/tags",
+        timeout=15
+    )
+
+    assert response.status_code == 200

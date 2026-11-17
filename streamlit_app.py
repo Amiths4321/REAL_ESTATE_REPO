@@ -14,6 +14,8 @@ from vision import analyze_property_image
 
 API_URL = os.getenv("API_URL", "http://backend:8000").rstrip("/")
 
+API_SECRET_KEY = os.getenv("API_SECRET_KEY")
+
 
 def new_memory():
     """Empty search preferences (the backend keeps the real memory)."""
@@ -190,6 +192,9 @@ if question:
                     json={
                         "session_id": st.session_state.api_session_id,
                         "question": question
+                    },
+                     headers={
+                         "X-API-Key": API_SECRET_KEY
                     },
                     timeout=300
                 )

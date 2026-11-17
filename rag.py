@@ -8,13 +8,89 @@ import json
 from dotenv import load_dotenv
 from pypdf import PdfReader
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+os.makedirs(DATA_DIR, exist_ok=True)
+
 load_dotenv()
 
-import sqlite3
+DATABASE = os.path.join(DATA_DIR, "real_estate_ai.db")
+
+EMBED_MODEL = os.getenv(
+    "OLLAMA_EMBED_MODEL",
+    "nomic-embed-text"
+)
+
+OLLAMA_BASE_URL = os.getenv(
+    "OLLAMA_BASE_URL",
+    "http://10.22.39.192:11434"
+)
+
+OLLAMA_MODEL = os.getenv(
+    "OLLAMA_MODEL",
+    "qwen2.5vl:latest"
+)
+
+
+DB_NAME = DATABASE
+DOCUMENT_FOLDER = os.path.join(BASE_DIR, "documents")
+
+
+def ask_qwen_for_reranking(prompt):
+    url = f"{OLLAMA_BASE_URL}/api/chat"
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0}
+    }
+
+    response = requests.post(
+        url,
+        json=payload,
+        timeout=(10, 300)
+    )
+
+    response.raise_for_status()
+
+    return response.json()["message"]["content"]
+
+
+def ensure_keyword_search():
+    connection = sqlite3.connect(DATABASE)
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS document_search
+        USING fts5(source, chunk_text)
+    """)
+
+    connection.commit()
+
+    cursor.execute("SELECT COUNT(*) FROM document_search")
+    count = cursor.fetchone()[0]
+
+    if count == 0:
+        cursor.execute("""
+            INSERT INTO document_search (source, chunk_text)
+            SELECT source, chunk_text
+            FROM document_chunks_v2
+        """)
+
+    connection.commit()
+    connection.close()
+
+    print("Keyword search index initialized.", flush=True)
+
 
 def setup_keyword_search():
 
-    connection = sqlite3.connect("real_estate_ai.db")
+    connection = sqlite3.connect(DATABASE)
 
     connection.execute("""
         CREATE VIRTUAL TABLE IF NOT EXISTS document_search
@@ -29,7 +105,7 @@ def setup_keyword_search():
 
 
 def hybrid_search(question, top_k=5):
-
+    ensure_keyword_search()
     keyword_results = keyword_search(question, top_k=10)
 
     vector_results = retrieve_documents_v2(
@@ -77,7 +153,7 @@ def hybrid_search(question, top_k=5):
 
 def index_keyword_documents():
 
-    connection = sqlite3.connect("real_estate_ai.db")
+    connection = sqlite3.connect(DATABASE)
 
     connection.execute("DELETE FROM document_search")
 
@@ -102,7 +178,7 @@ def index_keyword_documents():
 
 def keyword_search(question, top_k=5):
 
-    connection = sqlite3.connect("real_estate_ai.db")
+    connection = sqlite3.connect(DATABASE)
 
     # Convert question into FTS search terms
     terms = [
@@ -142,18 +218,7 @@ def keyword_search(question, top_k=5):
     return results
 
 
-OLLAMA_URL = os.getenv(
-    "OLLAMA_BASE_URL",
-    "http://10.22.39.192:11434"
-)
 
-EMBED_MODEL = os.getenv(
-    "OLLAMA_EMBED_MODEL",
-    "nomic-embed-text"
-)
-
-DB_NAME = "real_estate_ai.db"
-DOCUMENT_FOLDER = "documents"
 
 
 # STEP 1: Read TXT and PDF files
@@ -199,8 +264,7 @@ def index_documents_v2():
 
     create_advanced_document_table()
 
-    connection = sqlite3.connect(DB_NAME)
-
+    connection = sqlite3.connect(DATABASE)
     cursor = connection.cursor()
 
     for filename in os.listdir(DOCUMENT_FOLDER):
@@ -208,19 +272,20 @@ def index_documents_v2():
         if not filename.lower().endswith((".txt", ".pdf")):
             continue
 
-        file_path = os.path.join(
-            DOCUMENT_FOLDER,
-            filename
-        )
+        file_path = os.path.join(DOCUMENT_FOLDER, filename)
 
         print("Indexing:", filename)
 
+        # Remove previous chunks to prevent duplicates
+        cursor.execute(
+            "DELETE FROM document_chunks_v2 WHERE source = ?",
+            (filename,)
+        )
+
         pages = read_document_with_pages(file_path)
 
-        # Derive metadata from the filename
         project_name = os.path.splitext(filename)[0]
 
-        # Extract and process each page
         for page in pages:
 
             chunks = split_into_chunks(page["text"])
@@ -252,10 +317,7 @@ def index_documents_v2():
         connection.commit()
 
     connection.close()
-    cursor.execute(
-        "DELETE FROM document_chunks_v2 WHERE source = ?",
-        (filename,)
-    )
+
     print("Advanced document indexing completed!")
 
 
@@ -269,7 +331,7 @@ def retrieve_documents_v2(
     # Step 1: Convert question into an embedding
     query_embedding = get_embedding(question)
 
-    connection = sqlite3.connect(DB_NAME)
+    connection = sqlite3.connect(DATABASE)
     cursor = connection.cursor()
 
     # Step 2: Retrieve document chunks
@@ -392,7 +454,7 @@ def split_into_chunks(text, chunk_size=500, overlap=80):
 
 def get_embedding(text):
 
-    url = f"{OLLAMA_URL}/api/embed"
+    url = f"{OLLAMA_BASE_URL}/api/embed"
 
     payload = {
         "model": EMBED_MODEL,
@@ -402,21 +464,21 @@ def get_embedding(text):
     response = requests.post(
         url,
         json=payload,
-        timeout=120
+        timeout=(10, 300)
     )
 
     response.raise_for_status()
 
     result = response.json()
 
-    return result["embeddings"][0]
+    return response.json()["embeddings"][0]
 
 
 # STEP 4: Create the document database table
 
 def create_document_table():
 
-    connection = sqlite3.connect(DB_NAME)
+    connection = sqlite3.connect(DATABASE)
 
     cursor = connection.cursor()
 
@@ -449,7 +511,7 @@ def index_documents():
             f"Folder not found: {DOCUMENT_FOLDER}"
         )
 
-    connection = sqlite3.connect(DB_NAME)
+    connection = sqlite3.connect(DATABASE)
     cursor = connection.cursor()
 
     for filename in os.listdir(DOCUMENT_FOLDER):
@@ -521,7 +583,7 @@ def cosine_similarity(vector_a, vector_b):
 
 def create_advanced_document_table():
 
-    connection = sqlite3.connect(DB_NAME)
+    connection = sqlite3.connect(DATABASE)
 
     cursor = connection.cursor()
 
@@ -548,11 +610,63 @@ def create_advanced_document_table():
     connection.commit()
     connection.close()
 
+
+def rerank_documents(question, documents, top_k=5):
+    if not documents:
+        return []
+
+    document_text = ""
+
+    for index, doc in enumerate(documents):
+        document_text += (
+            f"\nDOCUMENT {index}\n"
+            f"Source: {doc.get('source', 'Unknown')}\n"
+            f"Content: {doc.get('text', doc.get('chunk_text', ''))}\n"
+        )
+
+    prompt = f"""
+You are a document relevance evaluator.
+
+User question:
+{question}
+
+Documents:
+{document_text}
+
+Rank the documents from most relevant to least relevant.
+
+Return ONLY valid JSON in this format:
+{{
+    "ranking": [0, 2, 1]
+}}
+
+Include only document indexes that exist.
+"""
+
+    response = ask_qwen_for_reranking(prompt)
+
+    import json
+
+    try:
+        ranking = json.loads(response)["ranking"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return documents[:top_k]
+
+    ranked_documents = []
+
+    for index in ranking:
+        if isinstance(index, int) and 0 <= index < len(documents):
+            if index not in [item[0] for item in ranked_documents]:
+                ranked_documents.append((index, documents[index]))
+
+    return [doc for _, doc in ranked_documents[:top_k]]
+
+
 def retrieve_documents(question, top_k=3):
 
     query_embedding = get_embedding(question)
 
-    connection = sqlite3.connect(DB_NAME)
+    connection = sqlite3.connect(DATABASE)
 
     cursor = connection.cursor()
 

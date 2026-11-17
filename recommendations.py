@@ -1,8 +1,9 @@
 
 import sqlite3
 import pandas as pd
+from app import DATABASE
 
-DB_NAME = "real_estate_ai.db"
+DB_NAME = DATABASE
 
 
 def get_available_properties():
@@ -10,18 +11,18 @@ def get_available_properties():
     connection = sqlite3.connect(DB_NAME)
 
     query = """
-          SELECT
-                    property_id,
-                    property_type,
-                    location,
-                    price,
-                    bedrooms,
-                    bathrooms,
-                    area_sqft,
-                    status
-          FROM properties
-          WHERE status = 'Available'
-          """,
+        SELECT
+            property_id,
+            property_type,
+            location,
+            price,
+            bedrooms,
+            bathrooms,
+            area_sqft,
+            status
+        FROM properties
+        WHERE status = 'Available'
+    """
     df = pd.read_sql_query(query, connection
     )
 
